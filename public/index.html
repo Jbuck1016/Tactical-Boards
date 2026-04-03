@@ -187,8 +187,14 @@ body{display:flex;flex-direction:column;height:100vh;height:100dvh}
 
 /* ═══ CONSTANTS ══════════════════════════════════════ */
 
-const POS={24:'GK',148:'CB',149:'LB',150:'RB',151:'DM',152:'CM',153:'LWB',154:'RWB',
-  155:'AM',156:'LM',157:'RM',158:'LW',159:'RW',160:'CF',161:'ST',162:'SS'};
+/* Position name abbreviations from Sportmonks detailedPosition.name */
+const POS_ABBR={
+  'goalkeeper':'GK','centre-back':'CB','right-back':'RB','left-back':'LB',
+  'defensive-midfielder':'DM','central-midfielder':'CM','attacking-midfielder':'AM',
+  'right-midfielder':'RM','left-midfielder':'LM',
+  'right-winger':'RW','left-winger':'LW','right-wing-back':'RWB','left-wing-back':'LWB',
+  'centre-forward':'CF','striker':'ST','second-striker':'SS'
+};
 const GPOS={24:'GK',25:'DEF',26:'MID',27:'FWD'};
 const FORMS=['3-4-3','3-5-2','3-4-1-2','4-3-3','4-4-2','4-2-3-1','4-1-4-1',
   '4-4-1-1','4-5-1','4-1-2-1-2','4-2-2-2','5-3-2','5-4-1','5-2-3'];
@@ -338,7 +344,7 @@ function ffToIndex(ff,rows){
 }
 
 function parseForm(s){return s.split('-').map(Number)}
-function posLabel(dp,pp){return POS[dp]||GPOS[pp]||'??'}
+function posLabel(p){return p._posLabel||GPOS[p.position_id]||'??'}
 function pName(p){return p.common_name||p.display_name||p.name||('P'+p.id)}
 function sn(n){const p=(n||'').split(' ');return p[p.length-1]||n}
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
@@ -395,7 +401,7 @@ function renderPitch(){
     el.className='pm'+(S.swapSrc===i?' swap-src':'');
     el.style.left=p.x+'%';el.style.top=p.y+'%';
     el.dataset.idx=i;
-    const lbl=posLabel(p.detailed_position_id,p.position_id);
+    const lbl=posLabel(p);
     const num=p.jersey_number?'#'+p.jersey_number:'';
     el.innerHTML='<div class="dot">'+lbl+'</div><div class="pname">'+esc(p._sn||p.name)+' <span class="pnum">'+num+'</span></div>';
     el.addEventListener('mousedown',e=>startDrag(e,i));
@@ -410,7 +416,7 @@ function renderBench(){
   S.bench.forEach((p,i)=>{
     const el=document.createElement('div');
     el.className='bp'+(S.swapSrc!==null?' swap-target':'');
-    const lbl=posLabel(p.detailed_position_id,p.position_id);
+    const lbl=posLabel(p);
     el.innerHTML='<span class="bpos">'+lbl+'</span><span class="bname">'+esc(p._sn||p.name)+'</span><span class="bnum">#'+(p.jersey_number||'')+'</span>';
     el.onclick=()=>tapBench(i);
     benchList.appendChild(el);
@@ -583,16 +589,22 @@ selTeam.addEventListener('change',async()=>{
 
 async function loadSquad(tid){
   try{
-    const d=await api('/squads/teams/'+tid,{include:'player'});
+    const d=await api('/squads/teams/'+tid,{include:'player.detailedPosition'});
     S.squad=(d.data||[]).map(s=>{
       const p=s.player||{};
+      /* Extract position label from nested detailedPosition object */
+      const dp=p.detailedposition||p.detailedPosition||null;
+      let label='';
+      if(dp&&dp.code) label=POS_ABBR[dp.code]||dp.code.toUpperCase();
+      else if(dp&&dp.name) label=dp.name.split(' ').map(w=>w[0]).join('');
+      else label=GPOS[s.position_id]||'??';
       return{id:s.player_id,name:pName(p),_sn:sn(pName(p)),
         position_id:s.position_id,detailed_position_id:s.detailed_position_id,
-        jersey_number:s.jersey_number};
+        jersey_number:s.jersey_number,_posLabel:label};
     });
-    /* Log first 15 players with raw IDs so we can verify the mapping */
+    /* Debug log */
     S.squad.slice(0,15).forEach(p=>{
-      dbg('SQUAD: '+p.name+' | pos_id='+p.position_id+' detail_id='+p.detailed_position_id+' → '+posLabel(p.detailed_position_id,p.position_id)+' #'+p.jersey_number);
+      dbg('SQUAD: '+p.name+' → '+p._posLabel+' #'+p.jersey_number);
     });
     setupDefaults(tid);renderAll();
     toast('Squad: '+S.squad.length+' players');
@@ -711,7 +723,8 @@ function loadFixture(fx){
     players.push({id:s.player_id,name:nm,_sn:sn(nm),
       position_id:s.position_id||(sq?sq.position_id:25),
       detailed_position_id:s.detailed_position_id||(sq?sq.detailed_position_id:148),
-      jersey_number:s.jersey_number||(sq?sq.jersey_number:0),x,y});
+      jersey_number:s.jersey_number||(sq?sq.jersey_number:0),
+      _posLabel:sq?sq._posLabel:GPOS[s.position_id]||'??',x,y});
   });
   players.forEach(p=>{
     if(p.x===50&&p.y===50){for(let i=0;i<slots.length;i++){if(!used.has(i)){p.x=slots[i].x;p.y=slots[i].y;used.add(i);break}}}
@@ -723,7 +736,8 @@ function loadFixture(fx){
     return{id:s.player_id,name:nm,_sn:sn(nm),
       position_id:s.position_id||(sq?sq.position_id:25),
       detailed_position_id:s.detailed_position_id||(sq?sq.detailed_position_id:148),
-      jersey_number:s.jersey_number||(sq?sq.jersey_number:0)};
+      jersey_number:s.jersey_number||(sq?sq.jersey_number:0),
+      _posLabel:sq?sq._posLabel:GPOS[s.position_id]||'??'};
   });
   const allIds=new Set([...starters.map(s=>s.player_id),...subs.map(s=>s.player_id)]);
   const rest=S.squad.filter(p=>!allIds.has(p.id)).map(p=>({...p}));
