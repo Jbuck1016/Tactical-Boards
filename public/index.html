@@ -111,8 +111,10 @@ body{display:flex;flex-direction:column;height:100vh;height:100dvh}
   color:var(--marker-text);font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,.5);
   border:2px solid rgba(255,255,255,.2)}
 .pname{font-size:8px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8);
-  white-space:nowrap;max-width:56px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;max-width:62px;overflow:hidden;text-overflow:ellipsis;
   margin-top:1px;text-align:center;font-weight:600;line-height:1}
+.pnum{opacity:.6;font-weight:400}
+.bnum{opacity:.5;font-size:10px;margin-left:auto;flex-shrink:0}
 
 .pitch-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:rgba(255,255,255,.3);font-size:13px;text-align:center;padding:20px;pointer-events:none}
@@ -394,7 +396,8 @@ function renderPitch(){
     el.style.left=p.x+'%';el.style.top=p.y+'%';
     el.dataset.idx=i;
     const lbl=posLabel(p.detailed_position_id,p.position_id);
-    el.innerHTML='<div class="dot">'+lbl+'</div><div class="pname">'+esc(p._sn||p.name)+'</div>';
+    const num=p.jersey_number?'#'+p.jersey_number:'';
+    el.innerHTML='<div class="dot">'+lbl+'</div><div class="pname">'+esc(p._sn||p.name)+' <span class="pnum">'+num+'</span></div>';
     el.addEventListener('mousedown',e=>startDrag(e,i));
     el.addEventListener('touchstart',e=>startDrag(e,i),{passive:false});
     el.addEventListener('click',e=>{if(!el._dragged)tapPitch(i)});
@@ -408,7 +411,7 @@ function renderBench(){
     const el=document.createElement('div');
     el.className='bp'+(S.swapSrc!==null?' swap-target':'');
     const lbl=posLabel(p.detailed_position_id,p.position_id);
-    el.innerHTML='<span class="bpos">'+lbl+'</span><span class="bname">'+esc(p._sn||p.name)+'</span>';
+    el.innerHTML='<span class="bpos">'+lbl+'</span><span class="bname">'+esc(p._sn||p.name)+'</span><span class="bnum">#'+(p.jersey_number||'')+'</span>';
     el.onclick=()=>tapBench(i);
     benchList.appendChild(el);
   });
@@ -440,10 +443,25 @@ selForm.addEventListener('change',()=>{
 
 function reposition(tab){
   const rows=parseForm(tab.form),slots=formPositions(rows);
-  const sorted=[...tab.players];
-  const gi=sorted.findIndex(p=>p.position_id===24);
-  if(gi>0){const g=sorted.splice(gi,1)[0];sorted.unshift(g)}
-  tab.players=sorted.map((p,i)=>{const s=slots[i]||{x:50,y:50};return{...p,x:s.x,y:s.y}});
+  const gks=tab.players.filter(p=>p.position_id===24);
+  const defs=tab.players.filter(p=>p.position_id===25);
+  const mids=tab.players.filter(p=>p.position_id===26);
+  const fwds=tab.players.filter(p=>p.position_id===27);
+  const other=tab.players.filter(p=>![24,25,26,27].includes(p.position_id));
+  const usedIds=new Set();
+  const result=new Array(slots.length).fill(null);
+
+  function pick(pool){const p=pool.find(p=>!usedIds.has(p.id));if(p)usedIds.add(p.id);return p||null}
+  function pickAny(){for(const pool of [mids,defs,fwds,other,gks]){const p=pick(pool);if(p)return p}return null}
+
+  result[0]=pick(gks)||pickAny();
+  let si=1;
+  for(let r=0;r<rows.length;r++){
+    const cnt=rows[r];
+    let pool=r===0?defs:r===rows.length-1?fwds:mids;
+    for(let c=0;c<cnt;c++){result[si]=pick(pool)||pickAny();si++}
+  }
+  tab.players=result.filter(Boolean).map((p,i)=>({...p,x:slots[i]?slots[i].x:50,y:slots[i]?slots[i].y:50}));
 }
 
 /* ═══ DRAG ═══════════════════════════════════════════ */
@@ -578,21 +596,62 @@ async function loadSquad(tid){
 }
 
 function setupDefaults(tid){
-  const ord={24:0,25:1,26:2,27:3};
-  const sorted=[...S.squad].sort((a,b)=>(ord[a.position_id]||4)-(ord[b.position_id]||4));
+  const gks=S.squad.filter(p=>p.position_id===24);
+  const defs=S.squad.filter(p=>p.position_id===25);
+  const mids=S.squad.filter(p=>p.position_id===26);
+  const fwds=S.squad.filter(p=>p.position_id===27);
+  const other=S.squad.filter(p=>![24,25,26,27].includes(p.position_id));
+
   TABS.forEach(tab=>{
     const saved=loadTab(tid,tab);
     const form=saved?saved.form:'4-3-3';
     const rows=parseForm(form),slots=formPositions(rows);
-    const n=slots.length;
-    const starters=sorted.slice(0,Math.min(n,sorted.length));
-    const bench=sorted.slice(Math.min(n,sorted.length));
-    const players=starters.map((p,i)=>{
-      const s=slots[i]||{x:50,y:50};let x=s.x,y=s.y;
-      if(saved&&saved.pp){const sp=saved.pp.find(sp=>sp.id===p.id);if(sp){x=sp.x;y=sp.y}}
-      return{...p,x,y};
-    });
-    S.tabs[tab]={form,players,notes:saved?saved.notes:''};
+    const usedIds=new Set();
+    const result=new Array(slots.length).fill(null);
+
+    function pick(pool){
+      const p=pool.find(p=>!usedIds.has(p.id));
+      if(p) usedIds.add(p.id);
+      return p||null;
+    }
+    function pickAny(){
+      for(const pool of [mids,defs,fwds,other,gks]){const p=pick(pool);if(p)return p}
+      return null;
+    }
+
+    /* Slot 0 = GK */
+    result[0]=pick(gks)||pickAny();
+
+    /* Assign formation rows to position groups:
+       row 0 (idx 0) = DEF, last row = FWD, everything in between = MID */
+    let si=1;
+    for(let r=0;r<rows.length;r++){
+      const cnt=rows[r];
+      let pool;
+      if(r===0) pool=defs;
+      else if(r===rows.length-1) pool=fwds;
+      else pool=mids;
+      for(let c=0;c<cnt;c++){
+        result[si]=pick(pool)||pickAny();
+        si++;
+      }
+    }
+
+    /* Build player objects with positions */
+    const starters=result.filter(Boolean).map((p,i)=>({
+      ...p, x:slots[i]?slots[i].x:50, y:slots[i]?slots[i].y:50
+    }));
+
+    /* Apply saved positions */
+    if(saved&&saved.pp){
+      starters.forEach(p=>{
+        const sp=saved.pp.find(sp=>sp.id===p.id);
+        if(sp){p.x=sp.x;p.y=sp.y}
+      });
+    }
+
+    const bench=S.squad.filter(p=>!usedIds.has(p.id));
+    S.tabs[tab]={form,players:starters,notes:saved?saved.notes:''};
     if(tab==='base') S.bench=bench;
   });
 }
